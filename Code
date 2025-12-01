@@ -1,0 +1,72 @@
+# -----------------------------
+# Function: answer_user_query
+# Purpose: Retrieve relevant content chunks, call LLM, return grounded answer
+# -----------------------------
+
+def answer_user_query(query: str) -> dict:
+    """
+    Input: 
+        query: user's natural language question about products or Ayurveda guidance
+    Output: 
+        dict with keys:
+            - 'answer': string (LLM response)
+            - 'citations': list of dicts with 'doc_id' and 'section_id'
+    """
+
+    # --- Step 1: Normalize query ---
+    normalized_query = normalize_query(query)  # lowercase, strip, remove noise
+
+    # --- Step 2: Retrieve candidate chunks ---
+    # This is where we call the retriever
+    candidate_chunks = retriever.retrieve(query=normalized_query, k=8)
+
+    # --- Step 3: Hybrid reranking (optional) ---
+    top_chunks = hybrid_rerank(candidate_chunks, normalized_query)[:4]  # keep top 4 for context
+
+    # --- Step 4: Build LLM context ---
+    # Each chunk is prefixed with a header for citation clarity
+    context_text = "\n\n".join([
+        f"<<DOC:{c.meta['doc_id']} SECTION:{c.meta.get('section_id', c.id)}>>\n{c.text}"
+        for c in top_chunks
+    ])
+
+    # --- Step 5: System instruction ---
+    system_prompt = (
+        "You are an internal Kerala Ayurveda assistant. "
+        "Answer strictly using the provided context. "
+        "Do not make up facts. Include in-text citations like (doc::section) for each factual claim. "
+        "If information is missing, say: 'I don't know based on the provided content.'"
+    )
+
+    # --- Step 6: Build user prompt ---
+    user_prompt = f"User question: {query}\n\nContext:\n{context_text}\n\nAnswer concisely:"
+
+    # --- Step 7: Call the LLM ---
+    response = llm.call(system=system_prompt, user=user_prompt, max_tokens=400)
+    answer_text = response.text
+
+    # --- Step 8: Verify that each factual statement maps to at least one retrieved chunk ---
+    if not verify_citations(answer_text, top_chunks):
+        answer_text = "I don't know based on the provided content."
+
+    # --- Step 9: Return structured output with citations ---
+    citations = [
+        {
+            "doc_id": c.meta['doc_id'],
+            "section_id": c.meta.get('section_id', c.id)
+        }
+        for c in top_chunks
+    ]
+
+    return {
+        "answer": answer_text,
+        "citations": citations
+    }
+
+# -----------------------------
+# Notes:
+# 1. Retriever call happens at Step 2.
+# 2. Context is built in Step 4 by combining top chunks for the LLM prompt.
+# 3. Citations are attached in Step 9, using the metadata from the retrieved chunks.
+# 4. Post-check ensures no hallucination; unsupported claims are replaced with a safe fallback.
+# -----------------------------

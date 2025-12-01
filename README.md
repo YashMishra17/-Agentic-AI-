@@ -1,4 +1,4 @@
-#Part A – Small RAG design (concrete, not generic) 
+Part A – Small RAG design (concrete, not generic) 
 RAG Design (Fully Humanized)
 
 #High-Level Decisions and Reasoning
